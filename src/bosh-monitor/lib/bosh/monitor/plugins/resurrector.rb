@@ -29,16 +29,22 @@ module Bosh::Monitor
 
       def process(alert)
         deployment = alert.attributes['deployment']
-        job = alert.attributes['job']
-        id = alert.attributes['instance_id']
+        jobs_to_instance_ids = alert.attributes['jobs_to_instance_ids']
+        category = alert.attributes['category']
 
         # deployment, job, and id are only present for 'agent timed out' and 'vm missing for instance'
         # on the alert so this won't trigger a recreate for other types of alerts
-        if deployment && job && id
-          agent_key = ResurrectorHelper::JobInstanceKey.new(deployment, job, id)
-          @alert_tracker.record(agent_key, alert)
+        logger.info("#############################: category: #{category}")
+        logger.info("#############################: deployment: #{deployment}")
+        logger.info("#############################: jobs_to_instance_ids: #{jobs_to_instance_ids}")
 
-          payload = {'jobs' => {job => [id]}}
+        if category == Bosh::Monitor::Events::Alert::CATEGORY_DEPLOYMENT_HEALTH && deployment && !jobs_to_instance_ids.empty?
+          jobs_to_instance_ids.each do |instance_group, ids|
+            ids.each do |id|
+              agent_key = ResurrectorHelper::JobInstanceKey.new(deployment, instance_group, id)
+              @alert_tracker.record(agent_key, alert)
+            end
+          end
 
           unless director_info
             logger.error("(Resurrector) director is not responding with the status")
@@ -50,13 +56,13 @@ module Bosh::Monitor
                   'Content-Type' => 'application/json',
                   'authorization' => auth_provider(director_info).auth_header
               },
-              body: JSON.dump(payload)
+              body: JSON.dump({'jobs' => jobs_to_instance_ids})
           }
 
           state = @alert_tracker.state_for(deployment)
 
           if state.meltdown?
-            summary = "Skipping resurrection for instance: '#{job}/#{id}'; #{state.summary}"
+            summary = "Skipping resurrection for deployment: '#{deployment}'; #{state.summary}"
             @processor.process(
               :alert,
               severity: 1,
@@ -67,10 +73,12 @@ module Bosh::Monitor
               created_at: Time.now.to_i,
             )
           elsif state.managed?
-            if @resurrection_manager.resurrection_enabled?(deployment, job)
+            if @resurrection_manager.resurrection_enabled?(deployment, jobs_to_instance_ids.keys.first) # TODO this does not currently support multiple instance groups :(
+              logger.info('(Resurrector) notifying director')
+
               url = @uri.dup
               url.path = "/deployments/#{deployment}/scan_and_fix"
-              summary = "Notifying Director to recreate instance: '#{job}/#{id}'; #{state.summary}"
+              summary = "Notifying Director to resurrect deployment: '#{deployment}'; #{state.summary}"
               @processor.process(
                 :alert,
                 severity: 4,
@@ -82,7 +90,8 @@ module Bosh::Monitor
               )
               send_http_put_request(url.to_s, request)
             else
-              summary = "Skipping resurrection for instance: '#{job}/#{id}'; #{state.summary} because of resurrection config"
+              logger.info('(Resurrector) skipping resurrection')
+              summary = "Skipping resurrection for deployment: '#{deployment}'; #{state.summary} because of resurrection config"
               @processor.process(
                 :alert,
                 severity: 1,
