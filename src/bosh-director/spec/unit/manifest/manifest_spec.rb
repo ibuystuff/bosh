@@ -724,25 +724,27 @@ module Bosh::Director
             ],
           }
         end
+        let(:runtime_config_hash) do
+          {
+            'releases' => [
+              { 'name' => 'runtime_release', 'version' => '2' },
+            ],
+            'addons' => [
+              {
+                'name' => 'test',
+                'jobs' => [{
+                  'name' => 'addon_job',
+                  'release' => 'runtime_release',
+                }],
+              },
+            ],
+          }
+        end
 
         context 'that is not applicable to the deployment name' do
-          let(:runtime_config_hash) do
-            {
-              'releases' => [
-                { 'name' => 'runtime_release', 'version' => '2' },
-              ],
-              'addons' => [
-                {
-                  'name' => 'test',
-                  'exclude' => {
-                    'deployments' => ['test_deployment'],
-                  },
-                  'jobs' => [{
-                    'name' => 'addon_job',
-                    'release' => 'runtime_release',
-                  }],
-                },
-              ],
+          before do
+            runtime_config_hash['addons'][0]['exclude'] = {
+              'deployments' => ['test_deployment'],
             }
           end
 
@@ -751,29 +753,30 @@ module Bosh::Director
           end
         end
 
-        context 'that is not applicable to the deployment by excuding the instance_group name' do
-          let(:runtime_config_hash) do
-            {
-              'releases' => [
-                { 'name' => 'runtime_release', 'version' => '2' },
-              ],
-              'addons' => [
-                {
-                  'name' => 'test',
-                  'exclude' => {
-                    'instance_groups' => ['test_instance_group'],
-                  },
-                  'jobs' => [{
-                    'name' => 'addon_job',
-                    'release' => 'runtime_release',
-                  }],
-                },
-              ],
+        context 'that is not applicable to the deployment by excluding the instance_group name' do
+          before do
+            runtime_config_hash['addons'][0]['exclude'] = {
+              'instance_groups' => ['test_instance_group'],
             }
           end
 
           it 'returns the merged hashes without the addon and release' do
             expect(manifest_object.to_hash_filter_addons([])).to eq(manifest_hash)
+          end
+        end
+
+        context 'that is not applicable to the deployment by defined team' do
+          let(:non_eligable_team) { Models::Team.make(name: 'non-eligable-team') }
+          before do
+            runtime_config_hash['addons'][0]['exclude'] = {
+              'teams' => [
+                'non-eligable-team',
+              ],
+            }
+          end
+
+          it 'returns the merged hashes without the addon and release' do
+            expect(manifest_object.to_hash_filter_addons([non_eligable_team])).to eq(manifest_hash)
           end
         end
       end
